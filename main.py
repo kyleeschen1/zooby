@@ -188,12 +188,37 @@ def run_search(state):
     curses.curs_set(0)
 
 
-def build_regex(state):
-    term_list = state.search_terms.split()
-    if state.or_search:
-        return "|".join(term_list)
-    else:
-        return term_list[0]
+class Or:
+
+    def __init__(self, query):
+        self.query = query
+        term_list = query.split()
+        self.regex = "|".join(term_list)
+
+    def gather_results(self, cols, text, results):
+        results.append([cols[0], cols[1], text])
+
+
+class And:
+
+    def __init__(self, query):
+        term_list = query.split()
+        self.query = query
+        self.regex = term_list[0]
+        self.check_terms = term_list[1:]
+
+    def gather_results(self, cols, text, results):
+        if all(t in text for t in self.check_terms):
+            results.append([cols[0], cols[1], text])
+
+
+def or_gather_results(cols, text, results, check_terms):
+    results.append([cols[0], cols[1], text])
+
+
+def and_gather_results(cols, text, results, check_terms):
+    if all(term in text for term in check_terms):
+        results.append([cols[0], cols[1], text])
 
 
 def execute_search(state):
@@ -203,29 +228,21 @@ def execute_search(state):
     print_menu(state)
     state.screen.refresh()
 
-    query = build_regex(state)
     pdf_search_cmd = subprocess.Popen(
-        ["zooby.sh", state.path, query],
+        ["zooby.sh", state.path, state.query.regex],
         stdout=subprocess.PIPE,
         encoding="utf-8",
     )
 
     o, e = pdf_search_cmd.communicate()
-    state.results = []
-    if not state.or_search:
-        check_all_terms = state.search_terms.split()[1:]
 
+    results = []
     for line in o.splitlines():
         cols = line.split(":")
         text = ":".join(cols[2:])
-        if state.or_search:
-            cols = [cols[0], cols[1], text]
-            state.results.append(cols)
-        else:
-            if all(term in text for term in check_all_terms):
-                cols = [cols[0], cols[1], text]
-                state.results.append(cols)
+        state.query.gather_results(cols, text, results)
 
+    state.results = results
     n_results = len(state.results)
 
     result_file_name = "results.tsv"
@@ -245,7 +262,7 @@ def save_results_to_tsv(results, filepath):
     try:
         os.remove(filepath)
     except OSError:
-        print("askdjflask")
+        print("OS Error")
 
     with open(filepath, "w", newline="") as csv_writer:
         writer = csv.writer(csv_writer, delimiter="\t")
@@ -279,13 +296,18 @@ def get_user_input(state, row, max_input_size=200):
 
 def build_search(state, or_search):
 
-    state.or_search = or_search
     state.set_description("Enter words separated by spaces.")
     state.set_cmd_map({})
     print_menu(state)
     state.screen.refresh()
 
     search_terms = get_user_input(state, 6)
+
+    if or_search:
+        state.query = Or(search_terms)
+    else:
+        state.query = And(search_terms)
+
     state.search_terms = search_terms
     directory_msg = "Directory: " + state.directory
     search_term_msg = "Search terms: " + search_terms
@@ -322,7 +344,6 @@ def main(screen):
     state.set_description("Welcome to Zooby, the legal search tool!")
     state.set_cmd_map(
         {
-            "default": display_output,
             "s": ["Set search directory", run_search],
             "q": ["Quit", quit_loop],
         }
