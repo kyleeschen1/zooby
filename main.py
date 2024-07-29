@@ -211,6 +211,7 @@ def execute_search(state):
     state.results = []
     for line in o.splitlines():
         cols = line.split(":")
+        cols = [cols[0], cols[1], ":".join(cols[2:])]
         state.results.append(cols)
     n_results = len(state.results)
 
@@ -223,7 +224,7 @@ def execute_search(state):
         writer.writerow(["File", "Page", "Text"])
         writer.writerows(state.results)
 
-    state.set_description("Completed, with " + str(n_results) + "results!")
+    state.set_description("Completed, with " + str(n_results) + " results!")
     state.set_cmd_map({"o": ["Open results", open_results], "q": ["Quit", quit_loop]})
     print_menu(state)
 
