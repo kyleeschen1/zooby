@@ -5,7 +5,7 @@ import curses
 import command
 import save
 from state import State
-from logic import Or, And
+from query import Or, And, Exact
 
 
 def quit_loop(s):
@@ -70,9 +70,12 @@ def run_search(s):
     curses.curs_set(0)
     o, e = fzf_cmd.communicate()
 
+    # Set directory and file data
     s.directory = o.rstrip()
     s.directory_path = s.desktop_path + "/" + s.directory
+    s.filepath = s.directory_path + "/" + s.result_file_name
 
+    # Prepare message
     directory_msg = "Directory: " + s.directory
     cmd_msg = "Now choose a search type."
     msg = directory_msg + "\n" + cmd_msg
@@ -80,8 +83,9 @@ def run_search(s):
     s.set_description(msg)
     s.set_cmd_map(
         {
-            "a": ["And", build_search, False],
-            "o": ["Or", build_search, True],
+            "a": ["And", build_search, And],
+            "o": ["Or", build_search, Or],
+            "e": ["Exact", build_search, Exact],
             "q": ["Quit", quit_loop],
         }
     )
@@ -90,10 +94,19 @@ def run_search(s):
 
 
 def postprocess_pdfgrep(pdfgrep_output, query):
+
     results = []
+
     for line in pdfgrep_output.splitlines():
+
+        # pdfgrep uses ":" to delimit columns
         cols = line.split(":")
+
+        # adjusts for accidental splitting of the text column
         text = ":".join(cols[2:])
+
+        # "And" queries need to check whether the all words
+        # but the first also appear in the narrowed search space.
         if query.post_pdfgrep_check(text):
             row = [cols[0], cols[1], text]
             results.append(row)
@@ -119,7 +132,6 @@ def execute_search(s):
     s.results = postprocess_pdfgrep(o, s.query)
     n_results = len(s.results)
 
-    s.filepath = s.directory_path + "/" + s.result_file_name
     save.save(s.filepath, s.result_column_names, s.results)
 
     s.set_description("Completed, with " + str(n_results) + " results!")
@@ -151,24 +163,20 @@ def get_user_input(s, row, max_input_size=200):
     return user_input
 
 
-def build_search(s, or_search):
+def build_search(s, query_obj):
 
     s.set_description("Enter words separated by spaces.")
     s.set_cmd_map({})
     print_menu(s)
     s.screen.refresh()
 
-    search_terms = get_user_input(s, 6)
+    # Get search terms from user, then build query object.
+    s.search_terms = get_user_input(s, 6)
+    s.query = query_obj(s.search_terms)
 
-    if or_search:
-        s.query = Or(search_terms)
-    else:
-        s.query = And(search_terms)
-
-    s.search_terms = search_terms
+    # Build message
     directory_msg = "Directory: " + s.directory
-    search_term_msg = "Search terms: " + search_terms
-
+    search_term_msg = "Search terms: " + s.search_terms
     msg = directory_msg + "\n" + search_term_msg
 
     s.set_description(msg)

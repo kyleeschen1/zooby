@@ -1,3 +1,13 @@
+class Exact:
+
+    def __init__(self, query):
+        self.query = query
+        self.regex = query
+
+    def post_pdfgrep_check(self, text):
+        return True
+
+
 class Or:
 
     def __init__(self, query):
