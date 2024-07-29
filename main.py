@@ -57,7 +57,7 @@ def run_search(s):
     s.screen.refresh()
 
     directory_ls = subprocess.Popen(
-        ["ls", s.path], stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        ["ls", s.desktop_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE
     )
 
     fzf_cmd = subprocess.Popen(
@@ -71,7 +71,7 @@ def run_search(s):
     o, e = fzf_cmd.communicate()
 
     s.directory = o.rstrip()
-    s.path = s.path + "/" + s.directory
+    s.directory_path = s.desktop_path + "/" + s.directory
 
     directory_msg = "Directory: " + s.directory
     cmd_msg = "Now choose a search type."
@@ -89,30 +89,37 @@ def run_search(s):
     curses.curs_set(0)
 
 
+def postprocess_pdfgrep(pdfgrep_output, query):
+    results = []
+    for line in pdfgrep_output.splitlines():
+        cols = line.split(":")
+        text = ":".join(cols[2:])
+        if query.post_pdfgrep_check(text):
+            row = [cols[0], cols[1], text]
+            results.append(row)
+
+    return results
+
+
 def execute_search(s):
 
-    s.set_description("Running....")
+    s.set_description("Running...")
     s.set_cmd_map({})
     print_menu(s)
     s.screen.refresh()
 
     pdf_search_cmd = subprocess.Popen(
-        ["./shell/search_pdfs.sh", s.path, s.query.regex],
+        ["./shell/search_pdfs.sh", s.directory_path, s.query.regex],
         stdout=subprocess.PIPE,
         encoding="utf-8",
     )
 
     o, e = pdf_search_cmd.communicate()
 
-    results = []
-    for line in o.splitlines():
-        cols = line.split(":")
-        text = ":".join(cols[2:])
-        s.query.gather_results(cols, text, results)
-
-    s.results = results
+    s.results = postprocess_pdfgrep(o, s.query)
     n_results = len(s.results)
 
+    s.filepath = s.directory_path + "/" + s.result_file_name
     save.save(s.filepath, s.result_column_names, s.results)
 
     s.set_description("Completed, with " + str(n_results) + " results!")
@@ -191,9 +198,8 @@ def initialize_state(screen):
     s.border = "-------------------------------------------"
 
     # File configuration
-    s.path = os.path.expanduser("~/Desktop")
+    s.desktop_path = os.path.expanduser("~/Desktop")
     s.result_file_name = "results.tsv"
-    s.filepath = s.path + "/" + s.result_file_name
     s.result_column_names = ["File", "Page", "Text"]
 
     # Set initial menu

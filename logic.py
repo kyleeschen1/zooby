@@ -5,8 +5,8 @@ class Or:
         term_list = query.split()
         self.regex = "|".join(term_list)
 
-    def gather_results(self, cols, text, results):
-        results.append([cols[0], cols[1], text])
+    def post_pdfgrep_check(self, text):
+        return True
 
 
 class And:
@@ -17,6 +17,5 @@ class And:
         self.regex = term_list[0]
         self.check_terms = term_list[1:]
 
-    def gather_results(self, cols, text, results):
-        if all(t in text for t in self.check_terms):
-            results.append([cols[0], cols[1], text])
+    def post_pdfgrep_check(self, text):
+        return all(t in text for t in self.check_terms)
