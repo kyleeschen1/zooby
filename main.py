@@ -3,12 +3,16 @@ import subprocess
 import curses
 
 
+def do_nothing(state):
+    pass
+
+
 def dispatch_on_key(key, cmd_map):
     "Returns the cmd specified by the key."
     try:
         return cmd_map[key]
     except KeyError:
-        return cmd_map["default"]
+        return do_nothing
 
 
 def apply_cmd(state, cmd):
@@ -165,7 +169,8 @@ def run_search(state):
     curses.curs_set(0)
     o, e = head_cmd.communicate()
 
-    state.directory = o
+    state.directory = o.rstrip()
+    state.path = path + "/" + state.directory
 
     directory_msg = "Directory: " + state.directory
     cmd_msg = "Now choose a search type."
@@ -183,16 +188,68 @@ def run_search(state):
     curses.curs_set(0)
 
 
+def build_regex(state):
+    term_list = state.search_terms.split()
+    return "|".join(term_list)
+
+
 def execute_search(state):
-    print("sdaklfjaskl;")
+    query = build_regex(state)
+
+    state.set_description("Running....")
+    state.set_cmd_map({})
+    print_menu(state)
+    state.screen.refresh()
+
+    pdf_search_cmd = subprocess.Popen(
+        ["zooby.sh", state.path, query],
+        stdout=subprocess.PIPE,
+        encoding="utf-8",
+    )
+
+    o, e = pdf_search_cmd.communicate()
+    state.results = []
+    for line in o.splitlines():
+        cols = line.split(":")
+        state.results.append(cols)
+    n_results = len(state.results)
+
+    import csv
+
+    filepath = state.path + "/" + "results.tsv"
+    open(filepath, "w").close()
+    with open(filepath, "w", newline="") as csv_writer:
+        writer = csv.writer(csv_writer, delimiter="\t")
+        writer.writerow(["File", "Page", "Text"])
+        writer.writerows(state.results)
+
+    state.set_description("Completed, with " + str(n_results) + "results!")
+    state.set_cmd_map({"o": ["Open results", open_results], "q": ["Quit", quit_loop]})
+    print_menu(state)
 
 
-def my_raw_input(stdscr, r, c, prompt_string):
+def open_results(state):
+
+    open_results_process = subprocess.Popen(
+        ["open", state.path + "/results.tsv"],
+        stdout=subprocess.PIPE,
+        encoding="utf-8",
+    )
+
+
+def get_user_input(state, row, max_input_size=200):
+
+    curses.nocbreak()
     curses.echo()
-    stdscr.addstr(r, c, prompt_string)
-    stdscr.refresh()
-    ip = stdscr.getstr(r + 1, c, 20)
-    return ip
+    curses.curs_set(1)
+
+    user_input = state.screen.getstr(row, 0, max_input_size).decode("utf-8")
+
+    curses.cbreak()
+    curses.noecho()
+    curses.curs_set(0)
+
+    return user_input
 
 
 def build_search(state, or_search):
@@ -203,15 +260,8 @@ def build_search(state, or_search):
     print_menu(state)
     state.screen.refresh()
 
-    curses.nocbreak()  # Turn off cbreak mode
-    curses.echo()  # Turn echo back on
-    curses.curs_set(1)  # Turn cursor back on
-    search_terms = state.screen.getstr(5, 0, 20).decode("utf-8")
-
-    curses.cbreak()  # Turn off cbreak mode
-    curses.noecho()  # Turn echo back on
-    curses.curs_set(0)  # Turn cursor back on
-
+    search_terms = get_user_input(state, 6)
+    state.search_terms = search_terms
     directory_msg = "Directory: " + state.directory
     search_term_msg = "Search terms: " + search_terms
 
