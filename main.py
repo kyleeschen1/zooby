@@ -2,164 +2,65 @@ import os
 import subprocess
 import curses
 
-
-def do_nothing(state):
-    pass
-
-
-def dispatch_on_key(key, cmd_map):
-    "Returns the cmd specified by the key."
-    try:
-        return cmd_map[key]
-    except KeyError:
-        return do_nothing
+import command
+import save
+from state import State
+from logic import Or, And
 
 
-def apply_cmd(state, cmd):
-    "Applies a command to state, along with args if specified."
-    if isinstance(cmd, list):
-        first = cmd[0]
-        if isinstance(first, str):
-            op, args = cmd[1], cmd[2:]
-        else:
-            op, args = first, cmd[1:]
-        if args:
-            op(state, *args)
-        else:
-            op(state)
-    else:
-        cmd(state)
+def quit_loop(s):
+    s.continue_running = False
 
 
-class Env:
-
-    def __init__(self):
-        self.locals = {}
-
-    def bind(self, key, value):
-        self.locals[key] = value
-
-    def resolve(self, key):
-        return self.locals[key]
-
-
-class State:
-
-    def __init__(self, screen):
-        self.screen = screen
-        self.continue_running = True
-        self.env = Env()
-        self.border = "-------------------------------------------"
-
-    def set_title(self, title):
-        self.title = title
-
-    def set_description(self, description):
-        self.description = description
-
-    def set_cmd_map(self, cmd_map):
-        self.cmd_map = cmd_map
-
-    def run(self):
-        cmd = dispatch_on_key(self.key, self.cmd_map)
-        apply_cmd(self, cmd)
-
-
-def clear(state):
-    state.screen.clear()
-
-
-def display_output(state):
-    # state.screen.addstr(state.key)
-    pass
-
-
-def quit_loop(state):
-    state.continue_running = False
-
-
-def list_fn(state, args):
-    print(args)
-
-
-def print_cmds(state):
-    for k, v in state.cmd_map.items():
-        print(k + str(v))
-
-
-def run_shell(shell_cmd):
-    output = subprocess.run(shell_cmd, capture_output=True)
-    return output.stdout.decode("utf-8")
-
-
-def shell(state, shell_cmd):
-    output = subprocess.run(shell_cmd, capture_output=True)
-    output = output.stdout.decode("utf-8")
-    state.output = output
-    state.screen.addstr(output)
-
-
-def nl(s, number=1):
+def nl(screen, number=1):
     for i in range(number):
-        s.addstr("\n")
+        screen.addstr("\n")
 
 
-def print_title(menu, s):
-    s.addstr(menu.border)
-    nl(s)
-    s.addstr(menu.title)
-    nl(s)
-    s.addstr(menu.border)
-    nl(s)
+def print_title(menu, screen):
+    screen.addstr(menu.border)
+    nl(screen)
+    screen.addstr(menu.title)
+    nl(screen)
+    screen.addstr(menu.border)
+    nl(screen)
 
 
-def print_cmd_map(menu, s):
+def print_cmd_map(menu, screen):
     for k, v in menu.cmd_map.items():
         if isinstance(v, list):
             doc = v[0]
             if isinstance(doc, str):
-                nl(s)
-                s.addstr("[" + k + "]  " + doc)
+                nl(screen)
+                screen.addstr("[" + k + "]  " + doc)
 
 
-def print_menu(state):
+def print_menu(s):
 
-    menu = state
-    s = state.screen
+    menu = s
+    screen = s.screen
 
-    s.clear()
-    print_title(menu, s)
-    nl(s)
-    s.addstr(menu.description)
-    nl(s)
-    print_cmd_map(menu, s)
-
-
-cmd_map_all = {
-    "default": display_output,
-    "c": clear,
-    "d": ["List", list_fn, 1, 2, 3],
-    "s": ["Shell", shell, "pwd"],
-    "p": print_cmds,
-    "r": ["Print Menu", print_menu],
-    "q": ["Quit", quit_loop],
-}
+    screen.clear()
+    print_title(menu, screen)
+    nl(screen)
+    screen.addstr(menu.description)
+    nl(screen)
+    print_cmd_map(menu, screen)
 
 
-def run_search(state):
+def run_search(s):
 
-    state.set_description("Select directory in ~/Desktop with your files.")
-    state.set_cmd_map({})
-    print_menu(state)
-    nl(state.screen)
-    state.screen.refresh()
+    s.set_description("Select directory in ~/Desktop with your files.")
+    s.set_cmd_map({})
+    print_menu(s)
+    nl(s.screen)
+    s.screen.refresh()
 
-    path = os.path.expanduser("~/Desktop")
     directory_ls = subprocess.Popen(
-        ["ls", path], stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        ["ls", s.path], stdout=subprocess.PIPE, stderr=subprocess.PIPE
     )
 
-    head_cmd = subprocess.Popen(
+    fzf_cmd = subprocess.Popen(
         ["fzf", "--height", "40%", "--layout", "reverse"],
         stdin=directory_ls.stdout,
         stdout=subprocess.PIPE,
@@ -167,69 +68,36 @@ def run_search(state):
     )
 
     curses.curs_set(0)
-    o, e = head_cmd.communicate()
+    o, e = fzf_cmd.communicate()
 
-    state.directory = o.rstrip()
-    state.path = path + "/" + state.directory
+    s.directory = o.rstrip()
+    s.path = s.path + "/" + s.directory
 
-    directory_msg = "Directory: " + state.directory
+    directory_msg = "Directory: " + s.directory
     cmd_msg = "Now choose a search type."
     msg = directory_msg + "\n" + cmd_msg
 
-    state.set_description(msg)
-    state.set_cmd_map(
+    s.set_description(msg)
+    s.set_cmd_map(
         {
             "a": ["And", build_search, False],
             "o": ["Or", build_search, True],
             "q": ["Quit", quit_loop],
         }
     )
-    print_menu(state)
+    print_menu(s)
     curses.curs_set(0)
 
 
-class Or:
+def execute_search(s):
 
-    def __init__(self, query):
-        self.query = query
-        term_list = query.split()
-        self.regex = "|".join(term_list)
-
-    def gather_results(self, cols, text, results):
-        results.append([cols[0], cols[1], text])
-
-
-class And:
-
-    def __init__(self, query):
-        term_list = query.split()
-        self.query = query
-        self.regex = term_list[0]
-        self.check_terms = term_list[1:]
-
-    def gather_results(self, cols, text, results):
-        if all(t in text for t in self.check_terms):
-            results.append([cols[0], cols[1], text])
-
-
-def or_gather_results(cols, text, results, check_terms):
-    results.append([cols[0], cols[1], text])
-
-
-def and_gather_results(cols, text, results, check_terms):
-    if all(term in text for term in check_terms):
-        results.append([cols[0], cols[1], text])
-
-
-def execute_search(state):
-
-    state.set_description("Running....")
-    state.set_cmd_map({})
-    print_menu(state)
-    state.screen.refresh()
+    s.set_description("Running....")
+    s.set_cmd_map({})
+    print_menu(s)
+    s.screen.refresh()
 
     pdf_search_cmd = subprocess.Popen(
-        ["zooby.sh", state.path, state.query.regex],
+        ["./shell/search_pdfs.sh", s.path, s.query.regex],
         stdout=subprocess.PIPE,
         encoding="utf-8",
     )
@@ -240,52 +108,34 @@ def execute_search(state):
     for line in o.splitlines():
         cols = line.split(":")
         text = ":".join(cols[2:])
-        state.query.gather_results(cols, text, results)
+        s.query.gather_results(cols, text, results)
 
-    state.results = results
-    n_results = len(state.results)
+    s.results = results
+    n_results = len(s.results)
 
-    result_file_name = "results.tsv"
-    filepath = state.path + "/" + result_file_name
-    save_results_to_tsv(state.results, filepath)
+    save.save(s.filepath, s.result_column_names, s.results)
 
-    state.set_description("Completed, with " + str(n_results) + " results!")
-    state.set_cmd_map({"o": ["Open results", open_results], "q": ["Quit", quit_loop]})
-    print_menu(state)
+    s.set_description("Completed, with " + str(n_results) + " results!")
+    s.set_cmd_map({"o": ["Open results", open_results], "q": ["Quit", quit_loop]})
+    print_menu(s)
 
 
-import csv
-
-
-def save_results_to_tsv(results, filepath):
-    # Remove file if it exists
-    try:
-        os.remove(filepath)
-    except OSError:
-        print("OS Error")
-
-    with open(filepath, "w", newline="") as csv_writer:
-        writer = csv.writer(csv_writer, delimiter="\t")
-        writer.writerow(["File", "Page", "Text"])
-        writer.writerows(results)
-
-
-def open_results(state):
+def open_results(s):
 
     open_results_process = subprocess.Popen(
-        ["open", state.path + "/results.tsv"],
+        ["open", s.filepath],
         stdout=subprocess.PIPE,
         encoding="utf-8",
     )
 
 
-def get_user_input(state, row, max_input_size=200):
+def get_user_input(s, row, max_input_size=200):
 
     curses.nocbreak()
     curses.echo()
     curses.curs_set(1)
 
-    user_input = state.screen.getstr(row, 0, max_input_size).decode("utf-8")
+    user_input = s.screen.getstr(row, 0, max_input_size).decode("utf-8")
 
     curses.cbreak()
     curses.noecho()
@@ -294,42 +144,68 @@ def get_user_input(state, row, max_input_size=200):
     return user_input
 
 
-def build_search(state, or_search):
+def build_search(s, or_search):
 
-    state.set_description("Enter words separated by spaces.")
-    state.set_cmd_map({})
-    print_menu(state)
-    state.screen.refresh()
+    s.set_description("Enter words separated by spaces.")
+    s.set_cmd_map({})
+    print_menu(s)
+    s.screen.refresh()
 
-    search_terms = get_user_input(state, 6)
+    search_terms = get_user_input(s, 6)
 
     if or_search:
-        state.query = Or(search_terms)
+        s.query = Or(search_terms)
     else:
-        state.query = And(search_terms)
+        s.query = And(search_terms)
 
-    state.search_terms = search_terms
-    directory_msg = "Directory: " + state.directory
+    s.search_terms = search_terms
+    directory_msg = "Directory: " + s.directory
     search_term_msg = "Search terms: " + search_terms
 
     msg = directory_msg + "\n" + search_term_msg
 
-    state.set_description(msg)
-    state.set_cmd_map(
+    s.set_description(msg)
+    s.set_cmd_map(
         {
             "r": ["Run", execute_search],
             "q": ["Quit", quit_loop],
         }
     )
-    print_menu(state)
+    print_menu(s)
 
 
-def run_event_loop(state):
-    print_menu(state)
-    while state.continue_running:
-        state.key = state.screen.getkey()
-        state.run()
-        state.screen.refresh()
+def run_event_loop(s):
+    s.continue_running = True
+    print_menu(s)
+    while s.continue_running:
+        key = s.screen.getkey()
+        command.run(s, key)
+        s.screen.refresh()
+
+
+def initialize_state(screen):
+
+    s = State(screen)
+
+    # Display configuration
+    s.border = "-------------------------------------------"
+
+    # File configuration
+    s.path = os.path.expanduser("~/Desktop")
+    s.result_file_name = "results.tsv"
+    s.filepath = s.path + "/" + s.result_file_name
+    s.result_column_names = ["File", "Page", "Text"]
+
+    # Set initial menu
+    s.set_title("Zooby")
+    s.set_description("Welcome to Zooby, the pdf search tool!")
+    s.set_cmd_map(
+        {
+            "s": ["Set search directory", run_search],
+            "q": ["Quit", quit_loop],
+        }
+    )
+    return s
 
 
 def main(screen):
@@ -338,19 +214,11 @@ def main(screen):
     screen.clear()
     curses.curs_set(0)
 
-    # Initialize program state
-    state = State(screen)
-    state.set_title("Zooby")
-    state.set_description("Welcome to Zooby, the legal search tool!")
-    state.set_cmd_map(
-        {
-            "s": ["Set search directory", run_search],
-            "q": ["Quit", quit_loop],
-        }
-    )
+    # Initialize and configure program state
+    s = initialize_state(screen)
 
     # Run the event loop
-    run_event_loop(state)
+    run_event_loop(s)
 
 
 if __name__ == "__main__":
