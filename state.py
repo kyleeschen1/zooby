@@ -22,5 +22,5 @@ class State:
     def set_description(self, description):
         self.description = description
 
-    def set_cmd_map(self, cmd_map):
+    def set_cmd_map(self, cmd_map={}):
         self.cmd_map = cmd_map

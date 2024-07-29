@@ -5,7 +5,7 @@ import curses
 import command
 import save
 from state import State
-from query import Or, And, Exact
+from query import Or, And, Exact, postprocess_pdfgrep
 
 
 def quit_loop(s):
@@ -48,37 +48,40 @@ def print_menu(s):
     print_cmd_map(menu, screen)
 
 
-def run_search(s):
+def run_fzf_directory_selection(s):
+    fzf_cmd = subprocess.Popen(
+        f"(cd {s.desktop_path} && find . -type d -maxdepth 1 | sed '1d' | cut -c 3- | fzf --height 40% --layout reverse)",
+        shell=True,
+        stdout=subprocess.PIPE,
+        encoding="utf-8",
+    )
+    return fzf_cmd.communicate()
 
-    s.set_description("Select directory in ~/Desktop with your files.")
-    s.set_cmd_map({})
+
+def menu_set_directory(s):
+
+    s.set_description("Select the folder with your files.")
+    s.set_cmd_map()
     print_menu(s)
     nl(s.screen)
     s.screen.refresh()
 
-    directory_ls = subprocess.Popen(
-        ["ls", s.desktop_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE
-    )
-
-    fzf_cmd = subprocess.Popen(
-        ["fzf", "--height", "40%", "--layout", "reverse"],
-        stdin=directory_ls.stdout,
-        stdout=subprocess.PIPE,
-        encoding="utf-8",
-    )
-
-    curses.curs_set(0)
-    o, e = fzf_cmd.communicate()
+    o, e = run_fzf_directory_selection(s)
 
     # Set directory and file data
-    s.directory = o.rstrip()
+    s.directory = o.lstrip().rstrip()
     s.directory_path = s.desktop_path + "/" + s.directory
     s.filepath = s.directory_path + "/" + s.result_file_name
 
+    menu_build_query(s)
+
+
+def menu_build_query(s):
+
     # Prepare message
-    directory_msg = "Directory: " + s.directory
+    directory_msg = "Folder: " + s.directory
     cmd_msg = "Now choose a search type."
-    msg = directory_msg + "\n" + cmd_msg
+    msg = directory_msg + "\n" + "\n" + cmd_msg
 
     s.set_description(msg)
     s.set_cmd_map(
@@ -89,40 +92,20 @@ def run_search(s):
             "q": ["Quit", quit_loop],
         }
     )
-    print_menu(s)
     curses.curs_set(0)
-
-
-def postprocess_pdfgrep(pdfgrep_output, query):
-
-    results = []
-
-    for line in pdfgrep_output.splitlines():
-
-        # pdfgrep uses ":" to delimit columns
-        cols = line.split(":")
-
-        # adjusts for accidental splitting of the text column
-        text = ":".join(cols[2:])
-
-        # "And" queries need to check whether the all words
-        # but the first also appear in the narrowed search space.
-        if query.post_pdfgrep_check(text):
-            row = [cols[0], cols[1], text]
-            results.append(row)
-
-    return results
+    print_menu(s)
 
 
 def execute_search(s):
 
     s.set_description("Running...")
-    s.set_cmd_map({})
+    s.set_cmd_map()
     print_menu(s)
     s.screen.refresh()
 
     pdf_search_cmd = subprocess.Popen(
-        ["./shell/search_pdfs.sh", s.directory_path, s.query.regex],
+        f" (cd {s.directory_path} && pdfgrep {s.query.regex} -n -i *pdf | cut -c 3-) ",
+        shell=True,
         stdout=subprocess.PIPE,
         encoding="utf-8",
     )
@@ -130,12 +113,29 @@ def execute_search(s):
     o, e = pdf_search_cmd.communicate()
 
     s.results = postprocess_pdfgrep(o, s.query)
-    n_results = len(s.results)
 
     save.save(s.filepath, s.result_column_names, s.results)
+    menu_show_results(s)
 
-    s.set_description("Completed, with " + str(n_results) + " results!")
-    s.set_cmd_map({"o": ["Open results", open_results], "q": ["Quit", quit_loop]})
+
+def menu_show_results(s):
+    n_results = len(s.results)
+    s.set_description(
+        "Completed, with "
+        + str(n_results)
+        + " matches!"
+        + "\n"
+        + "Results have been saved to "
+        + s.filepath
+        + "."
+    )
+    s.set_cmd_map(
+        {
+            "o": ["Open results", open_results],
+            "r": ["Rerun with new query", menu_build_query],
+            "q": ["Quit", quit_loop],
+        }
+    )
     print_menu(s)
 
 
@@ -166,7 +166,7 @@ def get_user_input(s, row, max_input_size=200):
 def build_search(s, query_obj):
 
     s.set_description("Enter words separated by spaces.")
-    s.set_cmd_map({})
+    s.set_cmd_map()
     print_menu(s)
     s.screen.refresh()
 
@@ -175,14 +175,16 @@ def build_search(s, query_obj):
     s.query = query_obj(s.search_terms)
 
     # Build message
-    directory_msg = "Directory: " + s.directory
-    search_term_msg = "Search terms: " + s.search_terms
-    msg = directory_msg + "\n" + search_term_msg
+    directory_msg = "Folder: " + s.directory
+    search_term_msg = "Query: " + s.search_terms
+    msg = directory_msg + "\n" + search_term_msg + "\n\n" + "Choose your future!"
 
     s.set_description(msg)
     s.set_cmd_map(
         {
-            "r": ["Run", execute_search],
+            "r": ["Run Query", execute_search],
+            "e": ["Edit Query", menu_build_query],
+            "f": ["Edit Folder", menu_set_directory],
             "q": ["Quit", quit_loop],
         }
     )
@@ -190,6 +192,7 @@ def build_search(s, query_obj):
 
 
 def run_event_loop(s):
+
     s.continue_running = True
     print_menu(s)
     while s.continue_running:
@@ -206,23 +209,28 @@ def initialize_state(screen):
     s.border = "-------------------------------------------"
 
     # File configuration
-    s.desktop_path = os.path.expanduser("~/Desktop")
+    s.desktop_path = os.path.expanduser("~/Desktop").rstrip()
     s.result_file_name = "results.tsv"
     s.result_column_names = ["File", "Page", "Text"]
 
     # Set initial menu
     s.set_title("Zooby")
-    s.set_description("Welcome to Zooby, the pdf search tool!")
+    s.set_description(
+        "Welcome to Zooby, the pdf search tool!"
+        + "\n"
+        + "\n"
+        + "Please put the pdfs in a folder on your desktop before proceeding."
+    )
     s.set_cmd_map(
         {
-            "s": ["Set search directory", run_search],
+            "s": ["Set search directory", menu_set_directory],
             "q": ["Quit", quit_loop],
         }
     )
     return s
 
 
-def main(screen):
+def launch_cli(screen):
 
     # Initialize screen
     screen.clear()
@@ -235,5 +243,9 @@ def main(screen):
     run_event_loop(s)
 
 
+def main():
+    curses.wrapper(launch_cli)
+
+
 if __name__ == "__main__":
-    curses.wrapper(main)
+    main()
