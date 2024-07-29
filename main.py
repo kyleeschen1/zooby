@@ -179,8 +179,8 @@ def run_search(state):
     state.set_description(msg)
     state.set_cmd_map(
         {
-            "a": ["And", build_search, True],
-            "o": ["Or", build_search, False],
+            "a": ["And", build_search, False],
+            "o": ["Or", build_search, True],
             "q": ["Quit", quit_loop],
         }
     )
@@ -190,17 +190,20 @@ def run_search(state):
 
 def build_regex(state):
     term_list = state.search_terms.split()
-    return "|".join(term_list)
+    if state.or_search:
+        return "|".join(term_list)
+    else:
+        return term_list[0]
 
 
 def execute_search(state):
-    query = build_regex(state)
 
     state.set_description("Running....")
     state.set_cmd_map({})
     print_menu(state)
     state.screen.refresh()
 
+    query = build_regex(state)
     pdf_search_cmd = subprocess.Popen(
         ["zooby.sh", state.path, query],
         stdout=subprocess.PIPE,
@@ -209,24 +212,45 @@ def execute_search(state):
 
     o, e = pdf_search_cmd.communicate()
     state.results = []
+    if not state.or_search:
+        check_all_terms = state.search_terms.split()[1:]
+
     for line in o.splitlines():
         cols = line.split(":")
-        cols = [cols[0], cols[1], ":".join(cols[2:])]
-        state.results.append(cols)
+        text = ":".join(cols[2:])
+        if state.or_search:
+            cols = [cols[0], cols[1], text]
+            state.results.append(cols)
+        else:
+            if all(term in text for term in check_all_terms):
+                cols = [cols[0], cols[1], text]
+                state.results.append(cols)
+
     n_results = len(state.results)
 
-    import csv
-
-    filepath = state.path + "/" + "results.tsv"
-    open(filepath, "w").close()
-    with open(filepath, "w", newline="") as csv_writer:
-        writer = csv.writer(csv_writer, delimiter="\t")
-        writer.writerow(["File", "Page", "Text"])
-        writer.writerows(state.results)
+    result_file_name = "results.tsv"
+    filepath = state.path + "/" + result_file_name
+    save_results_to_tsv(state.results, filepath)
 
     state.set_description("Completed, with " + str(n_results) + " results!")
     state.set_cmd_map({"o": ["Open results", open_results], "q": ["Quit", quit_loop]})
     print_menu(state)
+
+
+import csv
+
+
+def save_results_to_tsv(results, filepath):
+    # Remove file if it exists
+    try:
+        os.remove(filepath)
+    except OSError:
+        print("askdjflask")
+
+    with open(filepath, "w", newline="") as csv_writer:
+        writer = csv.writer(csv_writer, delimiter="\t")
+        writer.writerow(["File", "Page", "Text"])
+        writer.writerows(results)
 
 
 def open_results(state):
