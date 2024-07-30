@@ -104,7 +104,7 @@ def execute_search(s):
     s.screen.refresh()
 
     pdf_search_cmd = subprocess.Popen(
-        f" (cd {s.directory_path} && pdfgrep {s.query.regex} -n -i *pdf | cut -c 3-) ",
+        f" (cd {s.directory_path} && pdfgrep {s.query.regex} -n -i *pdf) ",
         shell=True,
         stdout=subprocess.PIPE,
         encoding="utf-8",

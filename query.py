@@ -13,7 +13,7 @@ class Or:
     def __init__(self, query):
         self.query = query
         term_list = query.split()
-        self.regex = "|".join(term_list)
+        self.regex = "\|".join(term_list)
 
     def post_pdfgrep_check(self, text):
         return True
