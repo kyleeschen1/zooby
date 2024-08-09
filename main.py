@@ -66,7 +66,10 @@ def menu_set_directory(s):
     nl(s.screen)
     s.screen.refresh()
 
-    o, e = run_fzf_directory_selection(s)
+    while True:
+        o, e = run_fzf_directory_selection(s)
+        if o != "":
+            break
 
     # Set directory and file data
     s.directory = o.lstrip().rstrip()
